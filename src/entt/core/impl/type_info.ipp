@@ -1,6 +1,8 @@
 #ifndef ENTT_TYPE_INFO_IPP
 #define ENTT_TYPE_INFO_IPP
 
+#include "entt/core/type_info.hpp"
+
 namespace entt {
 
 namespace internal {
