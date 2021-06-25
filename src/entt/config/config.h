@@ -73,5 +73,38 @@ static_assert(ENTT_PACKED_PAGE && ((ENTT_PACKED_PAGE & (ENTT_PACKED_PAGE - 1)) =
 #   endif
 #endif
 
+// copied from asio config.h
+// Default to a header-only implementation. The user must specifically request
+// separate compilation by defining either ENTT_SEPARATE_COMPILATION or
+// ENTT_DYN_LINK (as a DLL/shared library implies separate compilation).
+#if !defined(ENTT_HEADER_ONLY)
+#     if !defined(ENTT_SEPARATE_COMPILATION)
+#         if !defined(ENTT_DYN_LINK)
+#             define ENTT_HEADER_ONLY 1
+#         endif // !defined(ENTT_DYN_LINK)
+#     endif // !defined(ENTT_SEPARATE_COMPILATION)
+#endif // !defined(ENTT_HEADER_ONLY)
+
+#if defined(ENTT_HEADER_ONLY)
+# define ENTT_DECL inline
+#else // defined(ENTT_HEADER_ONLY)
+# if defined(_MSC_VER) || defined(__BORLANDC__) || defined(__CODEGEARC__)
+// We need to import/export our code only if the user has specifically asked
+// for it by defining ENTT_DYN_LINK.
+#  if defined(ENTT_DYN_LINK)
+// Export if this is our own source, otherwise import.
+#   if defined(ENTT_SOURCE)
+#    define ENTT_DECL __declspec(dllexport)
+#   else // defined(ENTT_SOURCE)
+#    define ENTT_DECL __declspec(dllimport)
+#   endif // defined(ENTT_SOURCE)
+#  endif // defined(ENTT_DYN_LINK)
+# endif // defined(_MSC_VER) || defined(__BORLANDC__) || defined(__CODEGEARC__)
+#endif // defined(ENTT_HEADER_ONLY)
+
+// If ENTT_DECL isn't defined yet define it now.
+#if !defined(ENTT_DECL)
+# define ENTT_DECL
+#endif // !defined(ENTT_DECL)
 
 #endif

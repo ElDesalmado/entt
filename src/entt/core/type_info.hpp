@@ -23,10 +23,7 @@ namespace internal {
 
 
 struct ENTT_API type_seq final {
-    [[nodiscard]] static id_type next() ENTT_NOEXCEPT {
-        static ENTT_MAYBE_ATOMIC(id_type) value{};
-        return value++;
-    }
+    [[nodiscard]] ENTT_DECL static id_type next() ENTT_NOEXCEPT;
 };
 
 
@@ -256,5 +253,8 @@ template<typename Type>
 
 }
 
+#if defined(ENTT_HEADER_ONLY)
+#   include "entt/core/impl/type_info.ipp"
+#endif
 
 #endif
