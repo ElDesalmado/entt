@@ -2,8 +2,16 @@
 #define ENTT_CONFIG_CONFIG_H
 
 
-#ifndef ENTT_NOEXCEPT
+#if defined(__cpp_exceptions) && !defined(ENTT_NOEXCEPTION)
 #   define ENTT_NOEXCEPT noexcept
+#   define ENTT_THROW throw
+#   define ENTT_TRY try
+#   define ENTT_CATCH catch(...)
+#else
+#   define ENTT_NOEXCEPT
+#   define ENTT_THROW
+#   define ENTT_TRY if(true)
+#   define ENTT_CATCH if(false)
 #endif
 
 
@@ -52,12 +60,12 @@ static_assert(ENTT_PACKED_PAGE && ((ENTT_PACKED_PAGE & (ENTT_PACKED_PAGE - 1)) =
 #endif
 
 
-#ifndef ENTT_NO_ETO
+#ifdef ENTT_NO_ETO
 #   include <type_traits>
-#   define ENTT_IS_EMPTY(Type) std::is_empty<Type>
+#   define ENTT_IGNORE_IF_EMPTY std::false_type
 #else
 #   include <type_traits>
-#   define ENTT_IS_EMPTY(Type) std::false_type
+#   define ENTT_IGNORE_IF_EMPTY std::true_type
 #endif
 
 

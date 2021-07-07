@@ -16,6 +16,7 @@
 #include "../core/fwd.hpp"
 #include "../core/type_info.hpp"
 #include "../core/type_traits.hpp"
+#include "component.hpp"
 #include "entity.hpp"
 #include "fwd.hpp"
 #include "group.hpp"
@@ -58,6 +59,7 @@ class basic_registry {
 
     template<typename... Exclude, typename... Get, typename... Owned>
     struct group_handler<exclude_t<Exclude...>, get_t<Get...>, Owned...> {
+        static_assert(!std::disjunction_v<typename component_traits<Owned>::in_place_delete...>, "Groups do not support in-place delete");
         static_assert(std::conjunction_v<std::is_same<Owned, std::remove_const_t<Owned>>..., std::is_same<Get, std::remove_const_t<Get>>..., std::is_same<Exclude, std::remove_const_t<Exclude>>...>, "One or more component types are invalid");
         std::conditional_t<sizeof...(Owned) == 0, basic_sparse_set<Entity>, std::size_t> current{};
 
@@ -119,30 +121,29 @@ class basic_registry {
     }
 
     template<typename Component>
-    [[nodiscard]] const storage_type<Component> * pool_if_exists() const {
+    [[nodiscard]] const storage_type<Component> * pool_if_exists() const ENTT_NOEXCEPT {
         static_assert(std::is_same_v<Component, std::decay_t<Component>>, "Non-decayed types not allowed");
         const auto index = type_seq<Component>::value();
         return (!(index < pools.size()) || !pools[index].pool) ? nullptr : static_cast<const storage_type<Component> *>(pools[index].pool.get());
     }
 
-    Entity generate_identifier(const std::size_t pos) {
-        // traits_type::entity_mask is reserved to allow for null identifiers
-        ENTT_ASSERT(static_cast<typename traits_type::entity_type>(pos) < traits_type::entity_mask, "No entities available");
-        return entity_type{static_cast<typename traits_type::entity_type>(pos)};
+    auto generate_identifier(const std::size_t pos) ENTT_NOEXCEPT {
+        ENTT_ASSERT(pos < traits_type::to_integral(null), "No entities available");
+        return traits_type::construct(static_cast<typename traits_type::entity_type>(pos), {});
     }
 
-    Entity recycle_identifier() {
-        ENTT_ASSERT(available != null, "No entities available");
-        const auto curr = to_integral(available);
-        const auto version = to_integral(entities[curr]) & (traits_type::version_mask << traits_type::entity_shift);
-        available = entity_type{to_integral(entities[curr]) & traits_type::entity_mask};
-        return entities[curr] = entity_type{curr | version};
+    auto recycle_identifier() ENTT_NOEXCEPT {
+        ENTT_ASSERT(free_list != null, "No entities available");
+        const auto curr = traits_type::to_entity(free_list);
+        free_list = (tombstone | entities[curr]);
+        return (entities[curr] = traits_type::construct(curr, traits_type::to_version(entities[curr])));
     }
 
-    void release_entity(const Entity entity, const typename traits_type::version_type version) {
-        const auto entt = to_integral(entity) & traits_type::entity_mask;
-        entities[entt] = entity_type{to_integral(available) | (typename traits_type::entity_type{version} << traits_type::entity_shift)};
-        available = entity_type{entt};
+    auto release_entity(const Entity entity, const typename traits_type::version_type version) {
+        const auto entt = traits_type::to_entity(entity);
+        entities[entt] = traits_type::construct(traits_type::to_entity(free_list), version + (version == traits_type::to_version(tombstone)));
+        free_list = (tombstone | entity);
+        return traits_type::to_version(entities[entt]);
     }
 
 public:
@@ -161,7 +162,7 @@ public:
      * @return The entity identifier without the version.
      */
     [[nodiscard]] static entity_type entity(const entity_type entity) ENTT_NOEXCEPT {
-        return entity_type{to_integral(entity) & traits_type::entity_mask};
+        return traits_type::construct(traits_type::to_entity(entity), {});
     }
 
     /**
@@ -170,7 +171,7 @@ public:
      * @return The version stored along with the given entity identifier.
      */
     [[nodiscard]] static version_type version(const entity_type entity) ENTT_NOEXCEPT {
-        return version_type(to_integral(entity) >> traits_type::entity_shift);
+        return traits_type::to_version(entity);
     }
 
     /*! @brief Default constructor. */
@@ -235,8 +236,8 @@ public:
     [[nodiscard]] size_type alive() const {
         auto sz = entities.size();
 
-        for(auto curr = available; curr != null; --sz) {
-            curr = entities[to_integral(curr) & traits_type::entity_mask];
+        for(auto curr = free_list; curr != null; --sz) {
+            curr = entities[traits_type::to_entity(curr)];
         }
 
         return sz;
@@ -348,7 +349,7 @@ public:
      * @return The head of the list of destroyed entities.
      */
     [[nodiscard]] entity_type destroyed() const ENTT_NOEXCEPT {
-        return available;
+        return free_list;
     }
 
     /**
@@ -357,7 +358,7 @@ public:
      * @return True if the identifier is valid, false otherwise.
      */
     [[nodiscard]] bool valid(const entity_type entity) const {
-        const auto pos = size_type(to_integral(entity) & traits_type::entity_mask);
+        const auto pos = size_type(traits_type::to_entity(entity));
         return (pos < entities.size() && entities[pos] == entity);
     }
 
@@ -373,7 +374,7 @@ public:
      * @return Actual version for the given entity identifier.
      */
     [[nodiscard]] version_type current(const entity_type entity) const {
-        const auto pos = size_type(to_integral(entity) & traits_type::entity_mask);
+        const auto pos = size_type(traits_type::to_entity(entity));
         ENTT_ASSERT(pos < entities.size(), "Entity does not exist");
         return version(entities[pos]);
     }
@@ -388,8 +389,8 @@ public:
      *
      * @return A valid entity identifier.
      */
-    entity_type create() {
-        return (available == null) ? entities.emplace_back(generate_identifier(entities.size())) : recycle_identifier();
+    [[nodiscard]] entity_type create() {
+        return (free_list == null) ? entities.emplace_back(generate_identifier(entities.size())) : recycle_identifier();
     }
 
     /**
@@ -398,16 +399,17 @@ public:
      * @sa create
      *
      * If the requested entity isn't in use, the suggested identifier is created
-     * and returned. Otherwise, a new one will be generated for this purpose.
+     * and returned. Otherwise, a new identifier is generated.
      *
-     * @param hint A desired entity identifier.
+     * @param hint Required entity identifier.
      * @return A valid entity identifier.
      */
     [[nodiscard]] entity_type create(const entity_type hint) {
-        ENTT_ASSERT(hint != null, "Null entity not available");
         const auto length = entities.size();
 
-        if(const auto req = (to_integral(hint) & traits_type::entity_mask); !(req < length)) {
+        if(hint == null || hint == tombstone) {
+            return create();
+        } else if(const auto req = traits_type::to_entity(hint); !(req < length)) {
             entities.resize(size_type(req) + 1u, null);
 
             for(auto pos = length; pos < req; ++pos) {
@@ -415,12 +417,12 @@ public:
             }
 
             return (entities[req] = hint);
-        } else if(const auto curr = (to_integral(entities[req]) & traits_type::entity_mask); req == curr) {
+        } else if(const auto curr = traits_type::to_entity(entities[req]); req == curr) {
             return create();
         } else {
-            auto *it = &available;
-            for(; (to_integral(*it) & traits_type::entity_mask) != req; it = &entities[to_integral(*it) & traits_type::entity_mask]);
-            *it = entity_type{curr | (to_integral(*it) & (traits_type::version_mask << traits_type::entity_shift))};
+            auto *it = &free_list;
+            for(; traits_type::to_entity(*it) != req; it = &entities[traits_type::to_entity(*it)]);
+            *it = traits_type::construct(curr, traits_type::to_version(*it));
             return (entities[req] = hint);
         }
     }
@@ -436,7 +438,7 @@ public:
      */
     template<typename It>
     void create(It first, It last) {
-        for(; available != null && first != last; ++first) {
+        for(; free_list != null && first != last; ++first) {
             *first = recycle_identifier();
         }
 
@@ -469,7 +471,7 @@ public:
     void assign(It first, It last, const entity_type destroyed) {
         ENTT_ASSERT(!alive(), "Entities still alive");
         entities.assign(first, last);
-        available = destroyed;
+        free_list = destroyed;
     }
 
     /**
@@ -485,29 +487,32 @@ public:
      * Attempting to use an invalid entity results in undefined behavior.
      *
      * @param entity A valid entity identifier.
+     * @return The version of the recycled entity.
      */
-    void destroy(const entity_type entity) {
-        destroy(entity, version(entity) + 1u);
+    version_type destroy(const entity_type entity) {
+        return destroy(entity, traits_type::to_version(entity) + 1u);
     }
 
     /**
      * @brief Destroys an entity.
      *
-     * The suggested version is used instead of the implicitly generated one.
+     * The suggested version or the valid version closest to the suggested one
+     * is used instead of the implicitly generated version.
      *
      * @sa destroy
      *
      * @param entity A valid entity identifier.
      * @param version A desired version upon destruction.
+     * @return The version actually assigned to the entity.
      */
-    void destroy(const entity_type entity, const version_type version) {
+    version_type destroy(const entity_type entity, const version_type version) {
         ENTT_ASSERT(valid(entity), "Invalid entity");
 
         for(auto pos = pools.size(); pos; --pos) {
             pools[pos-1].pool && pools[pos-1].pool->remove(entity, this);
         }
 
-        release_entity(entity, version);
+        return release_entity(entity, version);
     }
 
     /**
@@ -740,6 +745,24 @@ public:
         }
     }
 
+    /**
+     * @brief Removes all tombstones from a registry or only the pools for the
+     * given components.
+     * @tparam Component Types of components for which to clear all tombstones.
+     */
+    template<typename... Component>
+    void compact() {
+        if constexpr(sizeof...(Component) == 0) {
+            for(auto pos = pools.size(); pos; --pos) {
+                if(auto &pdata = pools[pos-1]; pdata.pool) {
+                    pdata.pool->compact();
+                }
+            }
+        } else {
+            (assure<Component>()->compact(), ...);
+        }
+    }
+
     /*! @copydoc remove */
     template<typename... Component>
     [[deprecated("Use ::remove instead")]]
@@ -943,13 +966,13 @@ public:
      */
     template<typename Func>
     void each(Func func) const {
-        if(available == null) {
+        if(free_list == null) {
             for(auto pos = entities.size(); pos; --pos) {
                 func(entities[pos-1]);
             }
         } else {
             for(auto pos = entities.size(); pos; --pos) {
-                if(const auto entity = entities[pos - 1]; (to_integral(entity) & traits_type::entity_mask) == (pos - 1)) {
+                if(const auto entity = entities[pos - 1]; traits_type::to_entity(entity) == (pos - 1)) {
                     func(entity);
                 }
             }
@@ -1615,7 +1638,7 @@ private:
     mutable std::vector<pool_data> pools{};
     std::vector<group_data> groups{};
     std::vector<entity_type> entities{};
-    entity_type available{null};
+    entity_type free_list{tombstone};
 };
 
 

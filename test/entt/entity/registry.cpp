@@ -6,10 +6,17 @@
 #include <type_traits>
 #include <gtest/gtest.h>
 #include <entt/core/type_traits.hpp>
-#include <entt/entity/registry.hpp>
+#include <entt/entity/component.hpp>
 #include <entt/entity/entity.hpp>
+#include <entt/entity/registry.hpp>
 
 struct empty_type {};
+struct stable_type { int value; };
+
+template<>
+struct entt::component_traits<stable_type>: basic_component_traits {
+    using in_place_delete = std::true_type;
+};
 
 struct non_default_constructible {
     non_default_constructible(int v): value{v} {}
@@ -524,6 +531,93 @@ TEST(Registry, CreateDestroyCornerCase) {
     ASSERT_EQ(registry.current(e1), entt::registry::version_type{1});
 }
 
+TEST(Registry, RangeDestroy) {
+    entt::registry registry;
+    const auto iview = registry.view<int>();
+    const auto icview = registry.view<int, char>();
+
+    const auto e0 = registry.create();
+    const auto e1 = registry.create();
+    const auto e2 = registry.create();
+
+    registry.emplace<int>(e0);
+    registry.emplace<char>(e0);
+    registry.emplace<double>(e0);
+
+    registry.emplace<int>(e1);
+    registry.emplace<char>(e1);
+
+    registry.emplace<int>(e2);
+
+    ASSERT_TRUE(registry.valid(e0));
+    ASSERT_TRUE(registry.valid(e1));
+    ASSERT_TRUE(registry.valid(e2));
+
+    registry.destroy(icview.begin(), icview.end());
+
+    ASSERT_FALSE(registry.valid(e0));
+    ASSERT_FALSE(registry.valid(e1));
+    ASSERT_TRUE(registry.valid(e2));
+
+    ASSERT_EQ(registry.size<int>(), 1u);
+    ASSERT_EQ(registry.size<char>(), 0u);
+    ASSERT_EQ(registry.size<double>(), 0u);
+
+    registry.destroy(iview.begin(), iview.end());
+
+    ASSERT_FALSE(registry.valid(e2));
+    ASSERT_NO_FATAL_FAILURE(registry.destroy(iview.begin(), iview.end()));
+    ASSERT_EQ(iview.size(), 0u);
+    ASSERT_EQ(icview.size_hint(), 0u);
+
+    ASSERT_EQ(registry.size<int>(), 0u);
+    ASSERT_EQ(registry.size<char>(), 0u);
+    ASSERT_EQ(registry.size<double>(), 0u);
+}
+
+TEST(Registry, StableDestroy) {
+    entt::registry registry;
+    const auto iview = registry.view<int>();
+    const auto icview = registry.view<int, stable_type>();
+
+    const auto e0 = registry.create();
+    const auto e1 = registry.create();
+    const auto e2 = registry.create();
+
+    registry.emplace<int>(e0);
+    registry.emplace<stable_type>(e0);
+    registry.emplace<double>(e0);
+
+    registry.emplace<int>(e1);
+    registry.emplace<stable_type>(e1);
+
+    registry.emplace<int>(e2);
+
+    ASSERT_TRUE(registry.valid(e0));
+    ASSERT_TRUE(registry.valid(e1));
+    ASSERT_TRUE(registry.valid(e2));
+
+    registry.destroy(icview.begin(), icview.end());
+
+    ASSERT_FALSE(registry.valid(e0));
+    ASSERT_FALSE(registry.valid(e1));
+    ASSERT_TRUE(registry.valid(e2));
+
+    ASSERT_EQ(registry.size<int>(), 1u);
+    ASSERT_EQ(registry.size<stable_type>(), 2u);
+    ASSERT_EQ(registry.size<double>(), 0u);
+
+    registry.destroy(iview.begin(), iview.end());
+
+    ASSERT_FALSE(registry.valid(e2));
+    ASSERT_EQ(iview.size(), 0u);
+    ASSERT_EQ(icview.size_hint(), 0u);
+
+    ASSERT_EQ(registry.size<int>(), 0u);
+    ASSERT_EQ(registry.size<stable_type>(), 2u);
+    ASSERT_EQ(registry.size<double>(), 0u);
+}
+
 TEST(Registry, VersionOverflow) {
     using traits_type = entt::entt_traits<entt::entity>;
 
@@ -535,7 +629,7 @@ TEST(Registry, VersionOverflow) {
     ASSERT_NE(registry.current(entity), registry.version(entity));
     ASSERT_NE(registry.current(entity), typename traits_type::version_type{});
 
-    registry.destroy(registry.create(), typename traits_type::version_type{traits_type::version_mask});
+    registry.destroy(registry.create(), traits_type::to_version(traits_type::construct()) - 1u);
     registry.destroy(registry.create());
 
     ASSERT_EQ(registry.current(entity), registry.version(entity));
@@ -544,9 +638,26 @@ TEST(Registry, VersionOverflow) {
 
 TEST(Registry, NullEntity) {
     entt::registry registry;
+    const entt::entity entity = entt::null;
 
-    ASSERT_FALSE(registry.valid(entt::null));
-    ASSERT_DEATH(static_cast<void>(registry.create(entt::null)), "");
+    ASSERT_FALSE(registry.valid(entity));
+    ASSERT_NE(registry.create(entity), entity);
+}
+
+TEST(Registry, TombstoneVersion) {
+    using traits_type = entt::entt_traits<entt::entity>;
+
+    entt::registry registry;
+    const entt::entity entity = entt::tombstone;
+
+    ASSERT_FALSE(registry.valid(entity));
+
+    const auto other = registry.create();
+    const auto vers = traits_type::to_version(entity);
+    const auto required = traits_type::construct(traits_type::to_entity(other), vers);
+
+    ASSERT_NE(registry.destroy(other, vers), vers);
+    ASSERT_NE(registry.create(required), required);
 }
 
 TEST(Registry, Each) {
@@ -554,18 +665,18 @@ TEST(Registry, Each) {
     entt::registry::size_type tot;
     entt::registry::size_type match;
 
-    registry.create();
+    static_cast<void>(registry.create());
     registry.emplace<int>(registry.create());
-    registry.create();
+    static_cast<void>(registry.create());
     registry.emplace<int>(registry.create());
-    registry.create();
+    static_cast<void>(registry.create());
 
     tot = 0u;
     match = 0u;
 
     registry.each([&](auto entity) {
         if(registry.all_of<int>(entity)) { ++match; }
-        registry.create();
+        static_cast<void>(registry.create());
         ++tot;
     });
 
@@ -1204,40 +1315,6 @@ TEST(Registry, Signals) {
     ASSERT_EQ(listener.last, e0);
 }
 
-TEST(Registry, RangeDestroy) {
-    entt::registry registry;
-    const auto iview = registry.view<int>();
-    const auto icview = registry.view<int, char>();
-
-    const auto e0 = registry.create();
-    const auto e1 = registry.create();
-    const auto e2 = registry.create();
-
-    registry.emplace<int>(e0);
-    registry.emplace<char>(e0);
-    registry.emplace<double>(e0);
-
-    registry.emplace<int>(e1);
-    registry.emplace<char>(e1);
-
-    registry.emplace<int>(e2);
-
-    ASSERT_TRUE(registry.valid(e0));
-    ASSERT_TRUE(registry.valid(e1));
-    ASSERT_TRUE(registry.valid(e2));
-
-    registry.destroy(icview.begin(), icview.end());
-
-    ASSERT_FALSE(registry.valid(e0));
-    ASSERT_FALSE(registry.valid(e1));
-    ASSERT_TRUE(registry.valid(e2));
-
-    registry.destroy(iview.begin(), iview.end());
-
-    ASSERT_FALSE(registry.valid(e2));
-    ASSERT_NO_FATAL_FAILURE(registry.destroy(iview.begin(), iview.end()));
-}
-
 TEST(Registry, Insert) {
     entt::registry registry;
 
@@ -1278,6 +1355,8 @@ TEST(Registry, Insert) {
 
 TEST(Registry, Erase) {
     entt::registry registry;
+    const auto iview = registry.view<int>();
+    const auto icview = registry.view<int, char>();
 
     const auto e0 = registry.create();
     const auto e1 = registry.create();
@@ -1292,92 +1371,83 @@ TEST(Registry, Erase) {
 
     registry.emplace<int>(e2);
 
-    ASSERT_TRUE(registry.all_of<int>(e0));
+    ASSERT_TRUE(registry.any_of<int>(e0));
     ASSERT_TRUE(registry.all_of<int>(e1));
-    ASSERT_TRUE(registry.all_of<int>(e2));
+    ASSERT_TRUE(registry.any_of<int>(e2));
 
-    const auto view = registry.view<int, char>();
+    registry.erase<int, char>(e0);
+    registry.erase<int, char>(icview.begin(), icview.end());
+    registry.erase<int, char>(icview.begin(), icview.end());
 
-    registry.erase<int>(e0);
-    registry.erase<int>(view.begin(), view.end());
-    registry.erase<int>(view.begin(), view.end());
+    ASSERT_FALSE(registry.any_of<int>(e0));
+    ASSERT_FALSE(registry.all_of<int>(e1));
+    ASSERT_TRUE(registry.any_of<int>(e2));
+
+    ASSERT_EQ(registry.size<int>(), 1u);
+    ASSERT_EQ(registry.size<char>(), 0u);
+    ASSERT_EQ(registry.size<double>(), 1u);
+
+    registry.erase<int>(iview.begin(), iview.end());
 
     ASSERT_DEATH(registry.erase<int>(e0), "");
     ASSERT_DEATH(registry.erase<int>(e1), "");
 
-    ASSERT_FALSE(registry.all_of<int>(e0));
-    ASSERT_FALSE(registry.all_of<int>(e1));
-    ASSERT_TRUE(registry.all_of<int>(e2));
+    ASSERT_FALSE(registry.any_of<int>(e2));
+    ASSERT_NO_FATAL_FAILURE(registry.erase<int>(iview.begin(), iview.end()));
+
+    ASSERT_EQ(registry.size<int>(), 0u);
+    ASSERT_EQ(registry.size<char>(), 0u);
+    ASSERT_EQ(registry.size<double>(), 1u);
 }
 
-TEST(Registry, RangeErase) {
+TEST(Registry, StableErase) {
     entt::registry registry;
     const auto iview = registry.view<int>();
-    const auto icview = registry.view<int, char>();
+    const auto icview = registry.view<int, stable_type>();
 
     const auto e0 = registry.create();
     const auto e1 = registry.create();
     const auto e2 = registry.create();
 
     registry.emplace<int>(e0);
-    registry.emplace<char>(e0);
+    registry.emplace<stable_type>(e0);
     registry.emplace<double>(e0);
 
     registry.emplace<int>(e1);
-    registry.emplace<char>(e1);
+    registry.emplace<stable_type>(e1);
 
     registry.emplace<int>(e2);
 
     ASSERT_TRUE(registry.any_of<int>(e0));
-    ASSERT_TRUE(registry.any_of<int>(e1));
+    ASSERT_TRUE(registry.all_of<int>(e1));
     ASSERT_TRUE(registry.any_of<int>(e2));
 
-    registry.erase<int, char>(icview.begin(), icview.end());
+    registry.erase<int, stable_type>(e0);
+    registry.erase<int, stable_type>(icview.begin(), icview.end());
+    registry.erase<int, stable_type>(icview.begin(), icview.end());
 
     ASSERT_FALSE(registry.any_of<int>(e0));
-    ASSERT_FALSE(registry.any_of<int>(e1));
+    ASSERT_FALSE(registry.all_of<int>(e1));
     ASSERT_TRUE(registry.any_of<int>(e2));
+
+    ASSERT_EQ(registry.size<int>(), 1u);
+    ASSERT_EQ(registry.size<stable_type>(), 2u);
+    ASSERT_EQ(registry.size<double>(), 1u);
 
     registry.erase<int>(iview.begin(), iview.end());
 
+    ASSERT_DEATH(registry.erase<int>(e0), "");
+    ASSERT_DEATH(registry.erase<int>(e1), "");
+
     ASSERT_FALSE(registry.any_of<int>(e2));
-    ASSERT_NO_FATAL_FAILURE(registry.erase<int>(iview.begin(), iview.end()));
+
+    ASSERT_EQ(registry.size<int>(), 0u);
+    ASSERT_EQ(registry.size<stable_type>(), 2u);
+    ASSERT_EQ(registry.size<double>(), 1u);
 }
 
 TEST(Registry, Remove) {
     entt::registry registry;
-
-    const auto e0 = registry.create();
-    const auto e1 = registry.create();
-    const auto e2 = registry.create();
-
-    registry.emplace<int>(e0);
-    registry.emplace<char>(e0);
-    registry.emplace<double>(e0);
-
-    registry.emplace<int>(e1);
-    registry.emplace<char>(e1);
-
-    registry.emplace<int>(e2);
-
-    ASSERT_TRUE(registry.all_of<int>(e0));
-    ASSERT_TRUE(registry.all_of<int>(e1));
-    ASSERT_TRUE(registry.all_of<int>(e2));
-
-    const auto view = registry.view<int, char>();
-
-    ASSERT_EQ(registry.remove<int>(e0), 1u);
-    ASSERT_EQ(registry.remove<int>(view.begin(), view.end()), 1u);
-    ASSERT_EQ(registry.remove<int>(view.begin(), view.end()), 0u);
-    ASSERT_EQ(registry.remove<int>(e1), 0u);
-
-    ASSERT_FALSE(registry.all_of<int>(e0));
-    ASSERT_FALSE(registry.all_of<int>(e1));
-    ASSERT_TRUE(registry.all_of<int>(e2));
-}
-
-TEST(Registry, RangeRemove) {
-    entt::registry registry;
     const auto iview = registry.view<int>();
     const auto icview = registry.view<int, char>();
 
@@ -1395,19 +1465,112 @@ TEST(Registry, RangeRemove) {
     registry.emplace<int>(e2);
 
     ASSERT_TRUE(registry.any_of<int>(e0));
-    ASSERT_TRUE(registry.any_of<int>(e1));
+    ASSERT_TRUE(registry.all_of<int>(e1));
     ASSERT_TRUE(registry.any_of<int>(e2));
 
-    registry.remove<int, char>(icview.begin(), icview.end());
+    registry.remove<int, char>(e0);
+
+    ASSERT_EQ((registry.remove<int, char>(icview.begin(), icview.end())), 2u);
+    ASSERT_EQ((registry.remove<int, char>(icview.begin(), icview.end())), 0u);
 
     ASSERT_FALSE(registry.any_of<int>(e0));
-    ASSERT_FALSE(registry.any_of<int>(e1));
+    ASSERT_FALSE(registry.all_of<int>(e1));
     ASSERT_TRUE(registry.any_of<int>(e2));
 
-    registry.remove<int>(iview.begin(), iview.end());
+    ASSERT_EQ(registry.size<int>(), 1u);
+    ASSERT_EQ(registry.size<char>(), 0u);
+    ASSERT_EQ(registry.size<double>(), 1u);
+
+    ASSERT_EQ((registry.remove<int>(iview.begin(), iview.end())), 1u);
+
+    ASSERT_EQ(registry.remove<int>(e0), 0u);
+    ASSERT_EQ(registry.remove<int>(e1), 0u);
 
     ASSERT_FALSE(registry.any_of<int>(e2));
     ASSERT_EQ(registry.remove<int>(iview.begin(), iview.end()), 0u);
+
+    ASSERT_EQ(registry.size<int>(), 0u);
+    ASSERT_EQ(registry.size<char>(), 0u);
+    ASSERT_EQ(registry.size<double>(), 1u);
+}
+
+TEST(Registry, StableRemove) {
+    entt::registry registry;
+    const auto iview = registry.view<int>();
+    const auto icview = registry.view<int, stable_type>();
+
+    const auto e0 = registry.create();
+    const auto e1 = registry.create();
+    const auto e2 = registry.create();
+
+    registry.emplace<int>(e0);
+    registry.emplace<stable_type>(e0);
+    registry.emplace<double>(e0);
+
+    registry.emplace<int>(e1);
+    registry.emplace<stable_type>(e1);
+
+    registry.emplace<int>(e2);
+
+    ASSERT_TRUE(registry.any_of<int>(e0));
+    ASSERT_TRUE(registry.all_of<int>(e1));
+    ASSERT_TRUE(registry.any_of<int>(e2));
+
+    registry.remove<int, stable_type>(e0);
+
+    ASSERT_EQ((registry.remove<int, stable_type>(icview.begin(), icview.end())), 2u);
+    ASSERT_EQ((registry.remove<int, stable_type>(icview.begin(), icview.end())), 0u);
+
+    ASSERT_FALSE(registry.any_of<int>(e0));
+    ASSERT_FALSE(registry.all_of<int>(e1));
+    ASSERT_TRUE(registry.any_of<int>(e2));
+
+    ASSERT_EQ(registry.size<int>(), 1u);
+    ASSERT_EQ(registry.size<stable_type>(), 2u);
+    ASSERT_EQ(registry.size<double>(), 1u);
+
+    ASSERT_EQ((registry.remove<int>(iview.begin(), iview.end())), 1u);
+
+    ASSERT_EQ(registry.remove<int>(e0), 0u);
+    ASSERT_EQ(registry.remove<int>(e1), 0u);
+
+    ASSERT_FALSE(registry.any_of<int>(e2));
+
+    ASSERT_EQ(registry.size<int>(), 0u);
+    ASSERT_EQ(registry.size<stable_type>(), 2u);
+    ASSERT_EQ(registry.size<double>(), 1u);
+}
+
+TEST(Registry, Compact) {
+    entt::registry registry;
+
+    const auto e0 = registry.create();
+    const auto e1 = registry.create();
+
+    registry.emplace<int>(e0);
+    registry.emplace<stable_type>(e0);
+
+    registry.emplace<int>(e1);
+    registry.emplace<stable_type>(e1);
+
+    ASSERT_EQ(registry.size<int>(), 2u);
+    ASSERT_EQ(registry.size<stable_type>(), 2u);
+
+    registry.destroy(e0);
+    registry.destroy(e1);
+
+    ASSERT_EQ(registry.size<int>(), 0u);
+    ASSERT_EQ(registry.size<stable_type>(), 2u);
+
+    registry.compact<int>();
+
+    ASSERT_EQ(registry.size<int>(), 0u);
+    ASSERT_EQ(registry.size<stable_type>(), 2u);
+
+    registry.compact();
+
+    ASSERT_EQ(registry.size<int>(), 0u);
+    ASSERT_EQ(registry.size<stable_type>(), 0u);
 }
 
 TEST(Registry, NonOwningGroupInterleaved) {
