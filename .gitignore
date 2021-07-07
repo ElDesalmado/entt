@@ -12,4 +12,4 @@ CMakeSettings.json
 /bazel-*
 
 # builds
-cmake-build-*
+/cmake-build-*
