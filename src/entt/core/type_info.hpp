@@ -22,7 +22,7 @@ namespace entt {
 namespace internal {
 
 
-struct ENTT_API type_seq final {
+struct /*ENTT_API*/ type_seq final {
     [[nodiscard]] ENTT_DECL static id_type next() ENTT_NOEXCEPT;
 };
 
@@ -85,20 +85,16 @@ template<typename Type>
  * @tparam Type Type for which to generate a sequential identifier.
  */
 template<typename Type, typename = void>
-struct ENTT_API type_seq final {
+struct /*ENTT_API*/ type_seq final {
     /**
      * @brief Returns the sequential identifier of a given type.
      * @return The sequential identifier of a given type.
      */
-    [[nodiscard]] static id_type value() ENTT_NOEXCEPT {
-        static const id_type value = internal::type_seq::next();
-        return value;
-    }
+    [[nodiscard]] ENTT_DECL static id_type value() ENTT_NOEXCEPT;
 
     /*! @copydoc value */
     [[nodiscard]] constexpr operator id_type() const ENTT_NOEXCEPT { return value(); }
 };
-
 
 /**
  * @brief Type hash.

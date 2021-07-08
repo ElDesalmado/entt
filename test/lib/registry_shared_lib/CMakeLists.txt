@@ -4,6 +4,7 @@ target_link_libraries(shared_registry PUBLIC EnTT::EnTT)
 target_compile_definitions(shared_registry
         PRIVATE ENTT_API_EXPORT
         INTERFACE ENTT_API_IMPORT
+        PUBLIC ENTT_DYN_LINK
         )
 
 add_library(importing_plugin SHARED plugin.cpp)

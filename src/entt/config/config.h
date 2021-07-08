@@ -96,7 +96,7 @@ static_assert(ENTT_PACKED_PAGE && ((ENTT_PACKED_PAGE & (ENTT_PACKED_PAGE - 1)) =
 #if defined(ENTT_HEADER_ONLY)
 # define ENTT_DECL inline
 #else // defined(ENTT_HEADER_ONLY)
-# if defined(_MSC_VER) || defined(__BORLANDC__) || defined(__CODEGEARC__)
+# if _WIN32 || defined(_MSC_VER) || defined(__BORLANDC__) || defined(__CODEGEARC__)
 // We need to import/export our code only if the user has specifically asked
 // for it by defining ENTT_DYN_LINK.
 #  if defined(ENTT_DYN_LINK)
