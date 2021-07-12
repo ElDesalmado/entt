@@ -250,7 +250,28 @@ template<typename Type>
 }
 
 #if defined(ENTT_HEADER_ONLY)
-#   include "entt/core/impl/type_info.ipp"
+#include "entt/core/impl/type_info.ipp"
+
+namespace entt {
+template <typename Type, typename V = void>
+using type_seq_local = type_seq<Type, V>;
+}
+#else
+
+namespace entt {
+template <typename Type, typename = void> struct type_seq_local {
+  [[nodiscard]] static id_type value() ENTT_NOEXCEPT {
+    static const id_type value = internal::type_seq::next();
+    return value;
+  }
+
+  /*! @copydoc value */
+  [[nodiscard]] constexpr operator id_type() const ENTT_NOEXCEPT {
+    return value();
+  }
+};
+
+} // namespace entt
 #endif
 
 #endif

@@ -24,8 +24,8 @@ struct dummy_1 {};
  */
 int get_id() {
   [[maybe_unused]] auto dummyId0 =
-      entt::type_seq<dummy_0>();             // expected id == 1
-  auto dummyId1 = entt::type_seq<dummy_1>(); // expected id == 2
+      entt::type_seq_local<dummy_0>();             // expected id == 1
+  auto dummyId1 = entt::type_seq_local<dummy_1>(); // expected id == 2
 
   return static_cast<int>(dummyId1);
 }
@@ -38,8 +38,8 @@ void increment(entt::registry &registry) {
 
   // if entt::internal::type_seq has been imported, ids will be 2 and 3
   // respectively.
-  [[maybe_unused]] auto dummyId0 = entt::type_seq<dummy_0>();
-  [[maybe_unused]] auto dummyId1 = entt::type_seq<dummy_1>();
+  [[maybe_unused]] auto dummyId0 = entt::type_seq_local<dummy_0>();
+  [[maybe_unused]] auto dummyId1 = entt::type_seq_local<dummy_1>();
 
   auto view = registry.view<test_increment>();
   if (std::distance(view.begin(), view.end()))

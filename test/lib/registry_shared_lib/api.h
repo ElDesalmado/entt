@@ -10,7 +10,7 @@ struct test_increment {
 
 #include <entt/entt.hpp>
 
-#if !_MSC_VER // MSVC does not allow extern with dllexport classes
+//#if !_MSC_VER // MSVC does not allow extern with dllexport classes
 extern
-#endif
-template struct ENTT_API entt::type_seq<test_increment>;
+//#endif
+template struct /*ENTT_API*/ entt::type_seq<test_increment>;
